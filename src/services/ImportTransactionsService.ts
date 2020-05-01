@@ -3,7 +3,8 @@ import fs from 'fs';
 import { In, getCustomRepository, getRepository } from 'typeorm';
 import Transaction from '../models/Transaction';
 import Category from '../models/Category';
-import TransactionRepository from '../repositories/TransactionsRepository';
+import TransactionsRepository from '../repositories/TransactionsRepository';
+import AppError from '../errors/AppError';
 
 interface CSVTransaction {
   title: string;
@@ -13,20 +14,28 @@ interface CSVTransaction {
 }
 class ImportTransactionsService {
   async execute(filePath: string): Promise<Transaction[]> {
-    const transactionRepository = getCustomRepository(TransactionRepository);
-    const categoriesRepository = getRepository(Category);
     const contactsReadStream = fs.createReadStream(filePath);
+    const categoriesRepository = getRepository(Category);
+    const transactionsRepository = getCustomRepository(TransactionsRepository);
+
     const parsers = csvParse({
+      delimiter: ',',
       from_line: 2,
     });
+
     const parseCSV = contactsReadStream.pipe(parsers);
+
     const transactions: CSVTransaction[] = [];
+
     const categories: string[] = [];
+
     parseCSV.on('data', async line => {
       const [title, type, value, category] = line.map((cell: string) =>
         cell.trim(),
       );
-      if (!title || !type || !value) return;
+      if (!title || !type || !value) {
+        throw new AppError('CSV broked');
+      }
       categories.push(category);
       transactions.push({ title, type, value, category });
     });
@@ -50,17 +59,17 @@ class ImportTransactionsService {
     );
     await categoriesRepository.save(newCategories);
     const finalCategories = [...newCategories, existentCategories];
-    const createdTransactions = transactionRepository.create(
+    const createdTransactions = transactionsRepository.create(
       transactions.map(transaction => ({
         title: transaction.title,
         type: transaction.type,
         value: transaction.value,
-        category: finalCategories.find(
-          category => category.title === transaction.category,
-        ),
+        // category: finalCategories.find(
+        //   category => category.title === transaction.category,
+        // ),
       })),
     );
-    await transactionRepository.save(createdTransactions);
+    await transactionsRepository.save(createdTransactions);
     await fs.promises.unlink(filePath);
     return createdTransactions;
   }
